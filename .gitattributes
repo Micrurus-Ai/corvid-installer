@@ -1,0 +1,12 @@
+# Shell scripts and YAML must keep LF line endings even on Windows checkouts.
+# Without this, bash/sh chokes on \r in shebangs and POSIX command parsing.
+*.sh   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+
+# PowerShell tolerates either, but pin LF so raw.githubusercontent.com
+# serves identical bytes regardless of the contributor's platform.
+*.ps1  text eol=lf
+
+# Markdown stays platform-native.
+*.md   text
