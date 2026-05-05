@@ -2,21 +2,23 @@
 
 One-line installer for the [Corvid](https://github.com/Micrurus-Ai/Corvid-lang) programming language.
 
+> **Canonical location:** these scripts also live in `Micrurus-Ai/Corvid-lang/install/` and `Micrurus-Ai/Corvid-lang/.github/workflows/release.yml`. The Corvid-lang copies are what users actually run; this repo is the development workspace where they were authored.
+
 ## Install
 
 **Windows** (PowerShell):
 
 ```powershell
-irm https://raw.githubusercontent.com/<owner>/corvid-installer/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/Micrurus-Ai/Corvid-lang/main/install/install.ps1 | iex
 ```
 
 **macOS / Linux**:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/<owner>/corvid-installer/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Micrurus-Ai/Corvid-lang/main/install/install.sh | sh
 ```
 
-Replace `<owner>` with the GitHub user/org hosting this repo. After install, open a new terminal and run:
+After install, open a new terminal and run:
 
 ```
 corvid doctor
@@ -67,7 +69,7 @@ Other targets fall back to the source build automatically.
 Example — pin a specific release:
 
 ```sh
-CORVID_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/<owner>/corvid-installer/main/install.sh | sh
+CORVID_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/Micrurus-Ai/Corvid-lang/main/install/install.sh | sh
 ```
 
 ## Uninstall

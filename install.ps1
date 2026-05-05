@@ -1,7 +1,7 @@
 # Corvid installer for Windows.
 #
 # One-line invocation:
-#   irm https://raw.githubusercontent.com/<owner>/corvid-installer/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/Micrurus-Ai/Corvid-lang/main/install/install.ps1 | iex
 #
 # Env var overrides:
 #   $env:CORVID_REPO     = "Micrurus-Ai/Corvid-lang"   # source repo

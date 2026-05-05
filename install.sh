@@ -2,7 +2,7 @@
 # Corvid installer for macOS and Linux.
 #
 # One-line invocation:
-#   curl -fsSL https://raw.githubusercontent.com/<owner>/corvid-installer/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/Micrurus-Ai/Corvid-lang/main/install/install.sh | sh
 #
 # Env var overrides:
 #   CORVID_REPO     (default: Micrurus-Ai/Corvid-lang)
