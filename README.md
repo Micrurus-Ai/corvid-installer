@@ -27,6 +27,8 @@ The install pipeline for the [Corvid](https://github.com/Micrurus-Ai/Corvid-lang
 - [Design decisions](#design-decisions)
 - [License](#license)
 
+Open follow-up tasks (push this repo, narrow PAT scope, deploy Cloudflare, etc.) live in [FOLLOWUPS.md](./FOLLOWUPS.md).
+
 ---
 
 ## Install Corvid (end users)
