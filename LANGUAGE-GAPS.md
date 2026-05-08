@@ -1,8 +1,21 @@
 # Corvid language gaps — detailed report
 
-Tested against [Micrurus-Ai/Corvid-lang](https://github.com/Micrurus-Ai/Corvid-lang) at commit `259dd59` (corvid-cli 0.0.1 / language v0.1.0). Discovered while building a non-trivial sample app (a ticket-triage agent exercising effects, dangerous tools, approve boundaries, prompts, budgets, and stdlib imports).
+Tested against [Micrurus-Ai/Corvid-lang](https://github.com/Micrurus-Ai/Corvid-lang) at commit `259dd59` (corvid-cli 0.0.1 / language v0.1.0). Discovered while building a non-trivial sample app (a ticket-triage agent exercising effects, dangerous tools, approve boundaries, prompts, budgets, and stdlib imports). All eight gaps were re-verified with isolated test cases on the same toolchain after the initial write-up; this version reflects the corrected findings.
 
 Scope: this file documents only **language / compiler / CLI gaps** — issues that require an upstream change to Corvid-lang itself. Install-pipeline and release-engineering issues are tracked separately in [LIVE-TEST-GAPS.md](./LIVE-TEST-GAPS.md).
+
+## Verification status (2026-05-06 re-test)
+
+| # | Gap | Verified | Notes after re-test |
+| --- | --- | --- | --- |
+| L-1 | `corvid check` doesn't resolve imports | ✓ | Reproduced with a bogus import: `check` exits 0 saying "ok"; `build` emits 2 errors on the same file. |
+| L-2 | Python codegen drops struct types | ✓ | Confirmed with isolated nested-struct test. Sibling primitive lowered fine; nested struct → `object`. |
+| L-3 | Native rejects struct returns | ✓ | **Broader than originally claimed** — affects both prompt returns *and* entry-agent returns at the command-line boundary. Two error sites, one underlying gap. |
+| L-4 | WASM rejects String params | ✓ | Same code with Int param compiles to wasm+js+d.ts cleanly. |
+| L-5 | `corvid run` auto picks native unsafely | ✓ | **Reframed.** Auto correctly picks native per its documented signature-based rule. The actual gap: when native fails for *environmental* reasons (missing runtime staticlib), auto does **not** fall back to interpreter even though the interpreter target produces correct output. |
+| L-6 | ANSI color leaks to non-TTY | ✓ | **Worse than originally claimed.** I said `NO_COLOR=1` cleans it up — it does not. The renderer ignores `NO_COLOR` entirely and emits ariadne's `Color::Red` unconditionally. Both env-var honoring and TTY detection are missing. |
+| L-7 | No `\` line continuation in strings | ✓ | Reproduced. |
+| L-8 | `approve` must match tool name | ✓ | **Less restrictive than originally claimed.** I said "must be PascalCase of tool name". Reality: both `approve send_to_pagerduty(...)` (snake) and `approve SendToPagerduty(...)` (Pascal) are accepted. Only mismatched names are rejected. |
 
 ## Severity legend
 
@@ -263,13 +276,13 @@ fn nested_struct_field_emits_class_name() {
 
 ---
 
-## L-3 — Native codegen rejects struct returns from prompts
+## L-3 — Native codegen rejects struct returns
 
 **Severity:** Medium
 **Component:** `crates/corvid-codegen-cl`
-**Status:** known incomplete (good error message)
+**Status:** known incomplete (good error messages, two distinct sites)
 
-### Reproduction
+### Reproduction — site 1: prompt returning a struct
 
 ```corvid
 type Triage:
@@ -285,24 +298,47 @@ agent main(t: String) -> Triage:
 
 ```sh
 corvid build src/main.cor --target=native
-# error: failed to build 'src/main.cor' (native): native codegen failed:
-# [1679..1695] native codegen does not yet support: prompt 'classify'
-# returns 'struct' — the native prompt bridge currently supports only
-# Int / Bool / Float / String returns; structured prompt returns are
-# not implemented yet
+# error: native codegen does not yet support: prompt 'classify'
+# returns 'struct' — the native prompt bridge currently supports
+# only Int / Bool / Float / String returns; structured prompt
+# returns are not implemented yet
+```
+
+### Reproduction — site 2: entry agent returning a struct
+
+```corvid
+type Decision:
+    label: String
+    score: Float
+
+prompt classify(text: String) -> Decision:
+    """ … """
+
+agent main(input: String) -> Decision:
+    return classify(input)
+```
+
+```sh
+corvid build src/main.cor --target=native
+# error: native codegen does not yet support: entry agent 'main'
+# returns 'struct' — the native command-line boundary currently
+# supports only Int/Bool/Float/String returns; structured output
+# needs a dedicated serialization layer
 ```
 
 ### Verdict
 
-Honest "not yet implemented" message, with a useful source span (`[1679..1695]` indexes into the source). The native prompt bridge needs to learn how to marshal struct returns from the LLM into Cranelift-codegen-friendly memory layouts. Non-trivial — the Python and interpreter targets get this for free because of dynamic typing.
+Two distinct error paths in native codegen, both honest "not yet implemented" messages. The underlying limitation is the same: the native target lacks a struct serialization layer for the prompt-bridge boundary AND for the command-line entry boundary. Python and interpreter targets get this for free because of dynamic typing.
+
+The original write-up of this gap covered only site 1 (prompt returns). Re-testing surfaced site 2 (entry-agent returns); they share fix scope but live in different lowering paths.
 
 ### Where it lives
 
-`crates/corvid-codegen-cl/src/lowering/prompt.rs`. The error is emitted from there based on the prompt's return type kind.
+`crates/corvid-codegen-cl/src/lowering/prompt.rs` (prompt bridge) and the entry-agent lowering path in the same crate. Search the codegen-cl crate for the literal error strings to find both.
 
 ### Suggested approach
 
-Extend the native prompt bridge to allocate a struct on the runtime heap, deserialize the LLM response into it via the existing JSON deserializer in `corvid-runtime`, and return a pointer. Roughly the same shape as how `corvid-runtime` already handles `Grounded<T>` for primitives.
+Extend the native runtime to allocate structs on the runtime heap, deserialize from JSON via the existing `corvid-runtime` deserializer, and return pointers. Same shape as the existing `Grounded<T>` handling for primitives. Both sites can share the implementation once it exists.
 
 ### Workaround for users today
 
@@ -344,11 +380,11 @@ Encode strings as `Int` indices into a side table (impractical) or stick to scal
 
 ---
 
-## L-5 — `corvid run` auto-dispatch picks native when interpreter would suffice
+## L-5 — `corvid run` auto-dispatch has no fallback when native build fails
 
 **Severity:** Low
 **Component:** `crates/corvid-cli`
-**Status:** logic bug in target heuristic
+**Status:** confirmed; original framing corrected
 
 ### Reproduction
 
@@ -362,39 +398,51 @@ agent main() -> Int:
 ```
 
 ```sh
-corvid run src/arith.cor
+corvid run src/arith.cor                  # exits 2
 # error: failed to run 'src/arith.cor': native codegen failed for 'arith':
 # linker error: corvid-runtime staticlib missing at
-# '<exe-dir>/corvid_runtime.lib' and no release fallback was found.
+# '<exe-dir>/corvid_runtime.lib' …
+
+corvid run src/arith.cor --target=interpreter   # exits 0
+# 47
+
+corvid run src/arith.cor --target=native        # exits 2 (same staticlib error)
 ```
 
-Compare to `corvid run` on a program that uses `prompt`, which correctly emits `↻ running via interpreter` and proceeds.
+The same program runs cleanly under the interpreter; auto refuses to fall back.
 
-### Why it's a bug
+### Corrected framing
 
-`run_cmd.rs`'s module-level doc says auto mode picks "the native AOT tier when the program stays within the current native command-line boundary; falls back to the interpreter otherwise." A pure-arithmetic program with `Int → Int → Int` signatures *clearly* stays within the boundary — Int is the simplest scalar. Yet auto mode sends it to native, which then fails on the missing staticlib (and would fail anyway for users without cargo set up).
+The original write-up claimed auto picks native "when interpreter would suffice." That's not quite right — the auto heuristic is doing exactly what its docs describe: an `Int → Int → Int` agent stays within the native command-line boundary, so auto picks native. Per spec.
 
-The auto heuristic seems to be inverted: it picks native when the program *uses tools*, then falls back to interpreter. It should pick interpreter for programs that don't need native specifically.
+The actual gap: when native build fails for *environmental* reasons (missing runtime staticlib, missing toolchain, link error, etc.), auto exits with the failure instead of falling back to the interpreter. The interpreter would have run the program correctly, but auto never tries it.
+
+This matters because the prebuilt release archive doesn't ship the runtime staticlib (LIVE-TEST-GAPS issue #4). End users who installed via the prebuilt path will hit this every time on tool-free programs — which is the simplest possible first program.
 
 ### Where it lives
 
-`crates/corvid-cli/src/run_cmd.rs` — the `cmd_run` function and the `RunTarget::Auto` resolution path.
+`crates/corvid-cli/src/run_cmd.rs` — the `cmd_run` function and `RunTarget::Auto` dispatch. Look for where native build failures propagate up: they likely don't catch the link error and retry with the interpreter.
 
 ### Suggested fix
 
-Re-read the eligibility check. Today's logic appears to be "use native unless tools are present without a tools-lib" — should instead be "use interpreter unless the program explicitly needs native (compiled libraries, FFI, etc.)". For most agents the interpreter is the correct default — it's the lowest-friction path and produces identical observable behavior.
+Two viable approaches:
 
-### Note
+1. **Eager probe.** Before committing to native, check whether `corvid_runtime.{lib,a}` is locatable. If not, transparently use the interpreter. Pro: no double-work on failure. Con: probe logic has to mirror the linker's actual search rules.
+2. **Lazy fallback.** Try native; on any link or codegen error, retry with the interpreter and emit `↻ falling back to interpreter: <reason>` to stderr (mirroring the existing `↻ running via interpreter` notice for tool-using code). Pro: no probe drift. Con: pays one failed compile before falling back.
 
-Once L-5 is fixed, `corvid run` on tool-free programs will Just Work without users needing to know about the native runtime staticlib. That removes the second-most-common first-impression failure (after L-1).
+Approach 2 mirrors the pattern the dispatcher already uses for tool-using code without `--with-tools-lib`, so it's consistent with existing UX.
+
+### Note on related issues
+
+Once LIVE-TEST-GAPS issue #4 (runtime staticlib in release archive) is fixed, this issue becomes much less visible — most users will never hit the failing native path. But the fallback gap is still a robustness improvement worth shipping.
 
 ---
 
-## L-6 — ANSI color escapes leak into non-TTY stderr
+## L-6 — ANSI color escapes emitted unconditionally
 
 **Severity:** Low
 **Component:** `crates/corvid-driver` (diagnostic renderer)
-**Status:** TTY detection missing
+**Status:** confirmed; original framing corrected
 
 ### Reproduction
 
@@ -407,31 +455,52 @@ corvid check src/main.cor 2>&1
 #  …
 ```
 
-The diagnostic is unreadable in PowerShell because escape codes aren't being interpreted. Setting `$env:NO_COLOR=1` cleans it up — so the renderer respects `NO_COLOR`, but doesn't auto-detect.
+Or in bash, redirecting to a file (definitely not a TTY):
 
-### Where it lives
+```sh
+corvid build src/bogus.cor > /tmp/out.txt 2>&1
+grep -c $'\x1b\[' /tmp/out.txt
+# 27        ← 27 ANSI escape sequences in non-TTY output
+```
 
-`crates/corvid-driver/src/render.rs` — diagnostic rendering. Currently emits color unconditionally when `NO_COLOR` is unset.
+### Corrected framing
+
+The original write-up claimed *"setting `$env:NO_COLOR=1` cleans it up — so the renderer respects `NO_COLOR`, but doesn't auto-detect."* That was wrong. Re-testing with `NO_COLOR=1` (both as a per-command prefix and via `export`) produces identical output: 27 escape sequences either way. The renderer ignores `NO_COLOR` entirely. **Both env-var honoring and TTY detection are missing**, not just one.
+
+The PowerShell behavior I previously attributed to NO_COLOR was probably an artifact of how `Out-String -Stream | ForEach-Object { $_ -replace '\[…' }` was filtering my own captured output, not the renderer responding to env state.
+
+### Root cause
+
+The diagnostic renderer uses [ariadne](https://crates.io/crates/ariadne) (workspace dep, version `0.4`). At `crates/corvid-driver/src/render.rs:28`:
+
+```rust
+.with_color(Color::Red)
+```
+
+There's no `Config::with_color(false)` toggle anywhere in the file, no env-var check, no `IsTerminal` probe. The `Color::Red` is hard-wired and ariadne emits the corresponding escapes whenever it serializes the report.
 
 ### Fix
 
-Use the [`is-terminal`](https://crates.io/crates/is-terminal) crate (or `std::io::IsTerminal` in Rust 1.70+) to detect whether stderr is a TTY. Skip color when not. Approximate diff:
+Build an ariadne `Config` once, with color disabled when either `NO_COLOR` is set per the [no-color.org spec](https://no-color.org) OR when stderr is not a TTY:
 
 ```diff
 +use std::io::IsTerminal;
-
++
  pub fn render_all_pretty(diags: &[Diagnostic], file: &Path, source: &str) -> String {
--    let with_color = std::env::var_os("NO_COLOR").is_none();
 +    let with_color = std::env::var_os("NO_COLOR").is_none()
 +        && std::io::stderr().is_terminal();
++    let cfg = ariadne::Config::default().with_color(with_color);
      …
+-    Report::build(…)
++    Report::build(…).with_config(cfg)
+         …
 ```
 
-Five lines, no new dependencies (`IsTerminal` is std).
+`std::io::IsTerminal` is in std since Rust 1.70 — no new dependency. ariadne's `Config::with_color(bool)` is the standard knob.
 
 ### Regression test
 
-Snapshot test: invoke `cargo run --bin corvid -- check` with stderr piped to a non-TTY, assert the captured output contains no `\x1b[` escape sequences.
+Snapshot test: invoke `cargo run --bin corvid -- check` with stderr redirected to a captured pipe, assert the captured output contains no `\x1b[` escape sequences.
 
 ---
 
@@ -480,45 +549,62 @@ Extend the lexer to consume a `\` followed by `\n` and skip it. ~10 lines in the
 
 ---
 
-## L-8 — `approve` identifier must match dangerous-tool name (undocumented)
+## L-8 — `approve` identifier rule is undocumented (and more permissive than expected)
 
 **Severity:** Low (docs)
 **Component:** docs only
-**Status:** language behavior is correct; documentation gap
+**Status:** confirmed; original claim corrected
 
-### Reproduction
+### Reproduction — three variants
 
 ```corvid
 tool send_to_pagerduty(s: String, b: String) -> Nothing dangerous
 
-agent escalate(s: String, b: String) -> Nothing:
-    approve PageOnCall(s, b)              # rejected
+# Variant A: mismatched name → REJECTED
+agent a(s: String, b: String) -> Nothing:
+    approve PageOnCall(s, b)
     send_to_pagerduty(s, b)
-```
-
-```sh
-corvid check src/main.cor
 # [E0101] error: dangerous tool 'send_to_pagerduty' called without a prior 'approve'
 # Help: add `approve SendToPagerduty(arg1, arg2)` on the line before this call
+
+# Variant B: matching PascalCase → ACCEPTED
+agent b(s: String, b: String) -> Nothing:
+    approve SendToPagerduty(s, b)
+    send_to_pagerduty(s, b)
+# ok: src/rightname.cor — no errors
+
+# Variant C: matching snake_case → ALSO ACCEPTED
+agent c(s: String, b: String) -> Nothing:
+    approve send_to_pagerduty(s, b)
+    send_to_pagerduty(s, b)
+# ok: src/lower.cor — no errors
 ```
 
-The `approve` identifier must be the PascalCase form of the tool's `snake_case` name. `PageOnCall` is rejected; `SendToPagerduty` is required.
+### Corrected framing
+
+The original write-up claimed *"the identifier following `approve` must be the PascalCase form of the dangerous tool's snake_case name."* That's too strict. Re-testing surfaced that the compiler accepts **either** the PascalCase form (`SendToPagerduty`) **or** the snake_case form matching the tool name verbatim (`send_to_pagerduty`).
+
+Only mismatched names (anything that doesn't normalize to the tool name) are rejected. The compiler's help message *suggests* PascalCase, which is probably the recommended convention, but it's not enforced.
 
 ### Verdict
 
-This is by design — pinning the approve name to the tool name lets reviewers grep `^\s*approve SendToPagerduty\b` and find every approval site for a given tool. Good security property.
+The rule is real — pinning approve identifiers to the tool name lets reviewers grep approval sites per-tool, which is a real security property. But:
 
-But:
-
-- The `approve-gates` tour topic shows the syntax without naming the rule.
-- The language reference under `docs/` doesn't state the PascalCase convention explicitly.
-- New users hit this on their first `dangerous` tool and learn it from the compiler error rather than the docs.
+- It's not documented anywhere I can find.
+- It's more permissive than the help message suggests, which can confuse a careful reader.
+- New users learn it from compiler errors, not from the spec.
 
 ### Fix
 
-Add a section to `docs/effects-spec/03-typing-rules.md` (or wherever approve gates are specified) titled "approve identifier naming" that says: *"The identifier following `approve` must be the PascalCase form of the dangerous tool's snake_case name. The compiler rejects mismatches at typecheck time (E0101). This makes approval sites greppable per-tool."*
+Add a section to `docs/effects-spec/03-typing-rules.md` (or wherever approve gates are formally specified) titled "approve identifier naming" that says:
+
+> The identifier following `approve` must match the corresponding `dangerous` tool's name in one of two normalized forms: the tool's exact `snake_case` name, or its `PascalCase` equivalent. The compiler rejects any other identifier with diagnostic E0101. The PascalCase form is recommended convention because it's visually distinct from regular function calls in approval-review settings, but both forms are accepted.
 
 Also extend the `corvid tour --topic approve-gates` blurb to mention the rule once.
+
+### Possible follow-on tightening
+
+If the maintainers decide that *only* one form should be accepted (probably PascalCase, given the help-message convention), that's a backwards-incompatible language change — current code that uses `approve <snake_case>` would break. Worth a brief language-team discussion before changing.
 
 ---
 
