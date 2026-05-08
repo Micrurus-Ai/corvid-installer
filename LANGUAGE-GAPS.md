@@ -17,6 +17,27 @@ Scope: this file documents only **language / compiler / CLI gaps** — issues th
 | L-7 | No `\` line continuation in strings | ✓ | Reproduced. |
 | L-8 | `approve` must match tool name | ✓ | **Less restrictive than originally claimed.** I said "must be PascalCase of tool name". Reality: both `approve send_to_pagerduty(...)` (snake) and `approve SendToPagerduty(...)` (Pascal) are accepted. Only mismatched names are rejected. |
 
+## Upstream fix status (re-tested 2026-05-06 against `Corvid-lang@ae8e3dd`)
+
+After this report was published, the maintainer landed phases 20l (first-impression gap repair) and 20m (verifier-driven corrections). I re-pulled, rebuilt the corvid binary, and re-ran every isolated repro from this file. Five of eight gaps are now closed.
+
+| # | Gap | Status | Upstream commit | Re-test result |
+| --- | --- | --- | --- | --- |
+| L-1 | `corvid check` doesn't resolve imports | **FIXED** | (in 20l-A — also lands `crates/corvid-cli/tests/check_validates_imports.rs`) | `check` on a bogus import now exits 1 with three E0000 diagnostics including "could not be found" |
+| L-2 | Python codegen drops struct types | **FIXED** | `11230d4 fix(codegen-py): preserve struct, list, and option types in Python annotations` | Nested `inner: Inner` now correctly typed (was `inner: object`) |
+| L-3 | Native rejects struct returns | open (roadmap) | — | Same error verbatim; honest "not yet implemented" |
+| L-4 | WASM rejects String params | open (roadmap) | — | Same error verbatim; honest "not yet implemented" |
+| L-5 | `corvid run` no fallback when native fails | **FIXED** | `3fb577e fix(driver): auto-fall-back to interpreter when native staticlib missing` | `corvid run arith.cor` now emits `↻ running via interpreter: native staticlib unavailable`, prints `47`, exits 0 |
+| L-6 | ANSI color leaks to non-TTY | **FIXED** | `c822dd5 fix(driver): suppress ANSI escapes in diagnostics when stderr is not a TTY` | Non-TTY output now has 0 ESC sequences (was 27) |
+| L-7 | No `\` line continuation in strings | open (design) | — | Still rejected; design choice flagged as such in the original report |
+| L-8 | `approve` naming undocumented | **DOCS UPDATED** | `68f8dca` then `e1b1728` — first names the PascalCase rule, then corrects the spec to accept both forms | Both `approve send_to_pagerduty(...)` and `approve SendToPagerduty(...)` accepted; mismatched name rejected |
+
+**Score:** 5 of 8 fixed in patch-sized commits; 2 remain as roadmap items with honest "not yet implemented" errors; 1 is a deliberate design choice. The two cheapest, highest-impact gaps from the priority table at the bottom of this file (L-1 and L-2) shipped first, exactly as suggested.
+
+The upstream regression test for L-1 (`crates/corvid-cli/tests/check_validates_imports.rs`) follows the shape sketched in this report and credits the case as "the reporter's exact case."
+
+The remaining open gaps (L-3, L-4, L-7) were correctly tagged as roadmap or design-decision items in the original report; none of them are blocking everyday Corvid use today.
+
 ## Severity legend
 
 - **Critical:** breaks the first-time user experience or quietly emits incorrect feedback. Must fix before next release.
