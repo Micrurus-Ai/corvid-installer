@@ -79,11 +79,8 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add install.sh install.ps1 release.yml
-          git commit -m "chore: sync install scripts + release workflow from Corvid-lang
-
-Automated mirror of Micrurus-Ai/Corvid-lang@main:
-  install/install.sh            -> install.sh
-  install/install.ps1           -> install.ps1
-  .github/workflows/release.yml -> release.yml"
+          git commit \
+            -m "chore: sync install scripts + release workflow from Corvid-lang" \
+            -m "Automated mirror of Micrurus-Ai/Corvid-lang@main: install/install.sh, install/install.ps1, .github/workflows/release.yml."
           git push
           echo "Synced and pushed updated mirror files."
