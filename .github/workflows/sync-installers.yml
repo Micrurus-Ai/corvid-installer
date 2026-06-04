@@ -1,0 +1,89 @@
+name: sync-installers
+
+# Keeps this repo's install.sh / install.ps1 / release.yml byte-identical
+# to the canonical copies in Micrurus-Ai/Corvid-lang, so the mirror can't
+# drift out of sync by hand (which is what put it ~a month behind before).
+#
+# Mapping (Corvid-lang main  ->  here):
+#   install/install.sh             -> install.sh
+#   install/install.ps1            -> install.ps1
+#   .github/workflows/release.yml  -> release.yml
+#
+# Triggers:
+#   - schedule          : daily safety net (picks up upstream changes within a day)
+#   - workflow_dispatch : run it now from the Actions tab
+#   - repository_dispatch (type: corvid-lang-install-changed):
+#         OPTIONAL instant path. Add a workflow in Corvid-lang that, on push
+#         touching install/** or .github/workflows/release.yml, POSTs:
+#           gh api repos/Micrurus-Ai/corvid-installer/dispatches \
+#             -f event_type=corvid-lang-install-changed
+#         using a PAT with `contents: write` on this repo. Not required for
+#         the mirror to work — the daily schedule already covers it.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"   # 06:17 UTC daily
+  workflow_dispatch:
+  repository_dispatch:
+    types: [corvid-lang-install-changed]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-installers
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch canonical files from Corvid-lang
+        run: |
+          set -euo pipefail
+          base="https://raw.githubusercontent.com/Micrurus-Ai/Corvid-lang/main"
+
+          # Download to temp files first so a failed/partial fetch never
+          # overwrites a good local copy.
+          curl -fsSL "$base/install/install.sh"            -o install.sh.new
+          curl -fsSL "$base/install/install.ps1"           -o install.ps1.new
+          curl -fsSL "$base/.github/workflows/release.yml" -o release.yml.new
+
+          # Sanity-guard: refuse to mirror an empty file or an HTML error
+          # page (e.g. if raw.githubusercontent served a 404 body with a
+          # 200-ish edge cache). Each file must be non-empty and contain a
+          # marker we expect in the real source.
+          check() {
+            f="$1"; marker="$2"
+            [ -s "$f" ]            || { echo "::error::$f is empty — aborting"; exit 1; }
+            grep -q "$marker" "$f" || { echo "::error::$f missing expected marker '$marker' — aborting"; exit 1; }
+          }
+          check install.sh.new  "Corvid installer for macOS and Linux"
+          check install.ps1.new "Corvid installer for Windows"
+          check release.yml.new "name: release"
+
+          mv install.sh.new  install.sh
+          mv install.ps1.new install.ps1
+          mv release.yml.new release.yml
+
+      - name: Commit & push if changed
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- install.sh install.ps1 release.yml; then
+            echo "Already in sync with Corvid-lang — nothing to commit."
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add install.sh install.ps1 release.yml
+          git commit -m "chore: sync install scripts + release workflow from Corvid-lang
+
+Automated mirror of Micrurus-Ai/Corvid-lang@main:
+  install/install.sh            -> install.sh
+  install/install.ps1           -> install.ps1
+  .github/workflows/release.yml -> release.yml"
+          git push
+          echo "Synced and pushed updated mirror files."
