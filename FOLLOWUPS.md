@@ -6,7 +6,7 @@ Mark items done by replacing `[ ]` with `[x]` in the checklist. The headings bel
 
 ## Checklist
 
-- [ ] [Publish corvid-installer as a public GitHub repo](#1-publish-corvid-installer-publicly)
+- [x] [Publish corvid-installer as a public GitHub repo](#1-publish-corvid-installer-publicly) — done; `origin` set, `main` in sync.
 - [ ] [Narrow `MANAGERS_TOKEN` scope to just `homebrew-corvid`](#2-narrow-managers_token-scope)
 - [ ] [Buy a short domain and deploy the Cloudflare Worker](#3-deploy-the-corvidsh-cloudflare-worker)
 - [ ] [Update install one-liners in Corvid-lang README to use `corvid.sh`](#4-switch-readme-install-commands-to-corvidsh)

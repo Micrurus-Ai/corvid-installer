@@ -20,6 +20,8 @@ The sample lives at `C:\Users\SBW\AppData\Local\Temp\corvid-playground-5404\tria
 
 #### Gap #1 — `corvid new`'s vendored stdlib is in the wrong place
 
+**Status: CLOSED (2026-06-04).** Fixed upstream in [`7b92e90`](https://github.com/Micrurus-Ai/Corvid-lang/commit/7b92e90) (`fix(corvid-driver): vendor std/ into src/std/`). Externally re-verified against Corvid-lang HEAD `0912f59` (descendant of the fix), `corvid-cli` built from source: `corvid new` now vendors to `src/std/`, `std/effects.cor` is absent at the project root, and `import "./std/effects" use EffectEnvelope` + `corvid check src/main.cor` exits `0` with no diagnostics. Confirmed against the **real** source-tree `std/effects.cor` (byte-identical to the vendored copy), not a stub. The originally-suggested one-line `src/std` change is exactly what shipped.
+
 **Severity:** critical (every fresh project I scaffold breaks at first import).
 
 **Repro:**
